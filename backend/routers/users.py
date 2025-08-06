@@ -1,16 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from passlib.hash import bcrypt
-from backend.schemas import User, Token, UserRegister, UserLogin, TokenData
-from backend.crud import get_user_by_email, create_user
-from backend.database import get_db
-from backend.models import Usuario
+from schemas import User, Token, UserRegister, UserLogin, TokenData
+from crud import get_user_by_email, create_user
+from database import get_db
+from models import Usuario
 from datetime import datetime, timedelta
 from jose import jwt, JWTError
 from fastapi.security import OAuth2PasswordBearer
 import os
 from typing import Annotated
-from backend.utils.email_utils import enviar_correo_verificacion, enviar_correo_recuperacion
+from utils.email_utils import enviar_correo_verificacion, enviar_correo_recuperacion
 
 router = APIRouter()
 
