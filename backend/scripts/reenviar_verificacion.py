@@ -1,8 +1,8 @@
 # backend/scripts/reenviar_verificacion.py
 
 import sys
-from backend.utils.email_utils import enviar_correo_verificacion
-from backend.routers.users import create_access_token
+from utils.email_utils import enviar_correo_verificacion
+from routers.users import create_access_token
 import os
 
 # Cambia esto por el email que ya está en tu base de datos
