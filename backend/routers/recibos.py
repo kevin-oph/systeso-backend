@@ -5,11 +5,11 @@ from typing import List
 from pathlib import Path
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from backend.database import get_db
-from backend.models import Recibo
-from backend.schemas import ReciboOut
-from backend.routers.users import get_current_user, require_admin, User
-from backend.utils.zip_processor import procesar_zip
+from database import get_db
+from models import Recibo
+from schemas import ReciboOut
+from routers.users import get_current_user, require_admin, User
+from utils.zip_processor import procesar_zip
 
 router = APIRouter(prefix="/recibos", tags=["Recibos"])
 
