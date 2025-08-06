@@ -1,7 +1,7 @@
 # backend/models.py
 
 from sqlalchemy import Column, String, Integer, DateTime, ForeignKey
-from backend.database import Base
+from database import Base
 from datetime import datetime
 
 
