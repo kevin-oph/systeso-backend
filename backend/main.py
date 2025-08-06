@@ -1,14 +1,14 @@
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from backend.models import init_db, Usuario
-from backend.routers import users, recibos, excel_upload
+from models import init_db, Usuario
+from routers import users, recibos, excel_upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.openapi.utils import get_openapi
-from backend.routers.users import hash_password
-from backend.database import engine, SessionLocal
-from backend.models import create_all_tables
-from backend.config import settings
+from routers.users import hash_password
+from database import engine, SessionLocal
+from models import create_all_tables
+from config import settings
 import os
 
 load_dotenv()
