@@ -3,9 +3,9 @@ import zipfile, tempfile, re, pdfplumber
 import os
 from datetime import datetime
 from pathlib import Path
-from backend.config import settings
-from backend.database import get_db, SessionLocal
-from backend.models import Usuario, Recibo
+from config import settings
+from database import get_db, SessionLocal
+from models import Usuario, Recibo
 
 RFC_RE = re.compile(r"\b([A-Z]{4}\d{6}[A-Z0-9]{3})\b")
 PER_RE = re.compile(
