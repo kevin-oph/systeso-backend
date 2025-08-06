@@ -2,7 +2,7 @@
 import bcrypt
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from backend.models import Usuario, Recibo
+from models import Usuario, Recibo
 
 # Users -----------------------------------------------------------------------
 
