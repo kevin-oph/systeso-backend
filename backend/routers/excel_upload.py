@@ -1,7 +1,7 @@
 from fastapi import APIRouter, File, UploadFile, Depends, HTTPException
-from backend.routers.users import require_admin
-from backend.database import get_db
-from backend.models import Usuario, CargaExcel
+from routers.users import require_admin
+from database import get_db
+from models import Usuario, CargaExcel
 import pandas as pd
 from datetime import datetime
 import io

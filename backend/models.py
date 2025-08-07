@@ -1,12 +1,12 @@
 # backend/models.py
 
 from sqlalchemy import Column, String, Integer, DateTime, ForeignKey
-from backend.database import Base
+from database import Base
 from datetime import datetime
 
 
 def init_db():
-    from backend.database import engine
+    from database import engine
     Base.metadata.create_all(bind=engine)
 
 class Usuario(Base):
@@ -47,5 +47,5 @@ class CargaExcel(Base):
 # Al final de backend/models.py
 
 def create_all_tables(engine):
-    from backend.database import Base  # Asegúrate de tener Base importado correctamente
+    from database import Base  # Asegúrate de tener Base importado correctamente
     Base.metadata.create_all(bind=engine)
