@@ -21,6 +21,9 @@ SECRET_KEY = os.getenv("JWT_SECRET", "supersecreto")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
+# ===> ESTA ES LA NUEVA VARIABLE (ponla en tu panel de Railway backend)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8501")
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
 
 # ------------------------------------------------------------------
@@ -112,7 +115,7 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
 
     # Generar token
     token = create_access_token({"sub": user.email, "rol": rol})
-    enlace_verificacion = f"http://localhost:8501/?token={token}"
+    enlace_verificacion = f"{FRONTEND_URL}/?token={token}"
     enviar_correo_verificacion(user.email, enlace_verificacion)
 
     return {
@@ -197,7 +200,7 @@ def reenviar_verificacion(data: dict = Body(...), db: Session = Depends(get_db))
         return {"mensaje": "El usuario ya ha verificado su correo."}
 
     token = create_access_token({"sub": email, "rol": usuario.rol})
-    enlace = f"http://localhost:8501?token={token}"
+    enlace = f"{FRONTEND_URL}/?token={token}"
 
     enviar_correo_verificacion(email, enlace)
 
@@ -208,7 +211,7 @@ def reenviar_verificacion(data: dict = Body(...), db: Session = Depends(get_db))
 # ------------------------------------------------------------------
 @router.post("/test/enviar_correo")
 def test_enviar_correo(email: str):
-    enlace_ficticio = "http://localhost:3000/verificar?token=PRUEBA123"
+    enlace_ficticio = f"{FRONTEND_URL}/verificar?token=PRUEBA123"
     enviar_correo_verificacion(email, enlace_ficticio)
     return {"mensaje": "Correo enviado (ver consola para confirmación o errores)"}
 
@@ -224,7 +227,7 @@ def solicitar_reset(data: dict = Body(...), db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Correo no registrado")
 
     token = create_access_token({"sub": email, "rol": user.rol})
-    enlace = f"http://localhost:8501/?reset_password=1&token={token}"
+    enlace = f"{FRONTEND_URL}/?reset_password=1&token={token}"
 
     user.reset_token = token
     db.commit()
