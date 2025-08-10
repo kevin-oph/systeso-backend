@@ -10,6 +10,10 @@ from fastapi.security import OAuth2PasswordBearer
 from typing import Annotated
 from urllib.parse import quote
 import os
+from passlib.hash import bcrypt
+
+def hash_password(password: str) -> str:
+    return bcrypt.hash(password)
 
 from utils.email_utils import enviar_correo_verificacion, enviar_correo_recuperacion
 
