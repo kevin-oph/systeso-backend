@@ -1,81 +1,94 @@
 # backend/utils/email_utils.py
-
-import smtplib
-from email.message import EmailMessage
 import os
+import smtplib
+import ssl
+from email.message import EmailMessage
 
-EMAIL_ORIGEN = os.getenv("EMAIL_FROM", "jefatura.nominas@zapatamorelos.gob.mx")
-SMTP_SERVER = os.getenv("SMTP_SERVER", "mail.zapatamorelos.gob.mx")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
-EMAIL_USER = os.getenv("EMAIL_USER", "jefatura.nominas@zapatamorelos.gob.mx")
-EMAIL_PASS = os.getenv("EMAIL_PASSWORD", "Admin123Nomina")
+# Lee TODO de variables de entorno (no hardcodees credenciales en el código)
+EMAIL_FROM = os.getenv("SMTP_FROM") or os.getenv("EMAIL_FROM") or "no-reply@tu-dominio.com"
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.example.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))  # 465=SSL, 587=STARTTLS
+SMTP_USER = os.getenv("SMTP_USER") or os.getenv("EMAIL_USER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or os.getenv("EMAIL_PASSWORD")
 
-def enviar_correo_verificacion(destino: str, enlace: str):
+def _send_email(to: str, subject: str, plain: str, html: str) -> None:
     msg = EmailMessage()
-    msg["Subject"] = "Confirma tu correo - Recibos Ayuntamiento"
-    msg["From"] = EMAIL_ORIGEN
-    msg["To"] = destino
-    msg.set_content(f"""\
-    Hola,
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_FROM
+    msg["To"] = to
 
-    Gracias por registrarte. Por favor confirma tu correo haciendo clic en el siguiente enlace:
+    # Parte texto plano
+    msg.set_content(plain)
 
-    {enlace}
+    # Parte HTML
+    msg.add_alternative(html, subtype="html")
 
-    Si no fuiste tú, ignora este mensaje.
-
-    Atentamente,
-    SYSTESO - Ayuntamiento de Emiliano Zapata
-    """)
-
-    msg.add_alternative(f"""\
-    <html>
-    <body>
-        <p>Hola,</p>
-        <p>Gracias por registrarte. Por favor haz clic en el siguiente enlace para verificar tu correo:</p>
-        <p><a href="{enlace}">{enlace}</a></p>
-        <p>Si no fuiste tú, puedes ignorar este mensaje.</p>
-        <br>
-        <p><b>SYSTESO</b><br>Ayuntamiento de Emiliano Zapata</p>
-    </body>
-    </html>
-    """, subtype="html")
-
-    try:
-        # Usamos SSL si estás en el puerto 465
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as smtp:
-            smtp.login(EMAIL_USER, EMAIL_PASS)
+    # Conecta por SSL (465) o STARTTLS (587)
+    if SMTP_PORT == 465:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as smtp:
+            if SMTP_USER and SMTP_PASSWORD:
+                smtp.login(SMTP_USER, SMTP_PASSWORD)
             smtp.send_message(msg)
-            print("✅ Correo de verificación enviado exitosamente.")
-    except Exception as e:
-        print(f"❌ Error enviando correo: {e}")
+    else:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
+            try:
+                smtp.starttls(context=ssl.create_default_context())
+            except smtplib.SMTPException:
+                # Algunos servidores en 25/2525 pueden no requerir STARTTLS
+                pass
+            if SMTP_USER and SMTP_PASSWORD:
+                smtp.login(SMTP_USER, SMTP_PASSWORD)
+            smtp.send_message(msg)
 
+def enviar_correo_verificacion(destino: str, enlace: str) -> None:
+    link = enlace.strip()
+    plain = f"""Hola,
 
-# ------------------------------------------------------------------
-# Enviar correo de recuperación de contraseña   
-# ------------------------------------------------------------------
+Haz clic en el siguiente enlace para verificar tu correo:
 
-def enviar_correo_recuperacion(destino: str, enlace: str):
-    msg = EmailMessage()
-    msg["Subject"] = "Recuperación de contraseña - Recibos Ayuntamiento"
-    msg["From"] = EMAIL_ORIGEN
-    msg["To"] = destino
-    msg.set_content(f"""
-Hola,
+<{link}>
 
-Solicitaste restablecer tu contraseña. Haz clic en este enlace para continuar:
-
-{enlace}
-
-Si no fuiste tú, ignora este mensaje.
+Si el botón no funciona, copia y pega la URL en tu navegador.
 
 Atentamente,
 SYSTESO - Ayuntamiento de Emiliano Zapata
-""")
-    try:
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as smtp:
-            smtp.login(EMAIL_USER, EMAIL_PASS)
-            smtp.send_message(msg)
-            print("✅ Correo de recuperación enviado exitosamente.")
-    except Exception as e:
-        print(f"❌ Error enviando correo: {e}")
+"""
+    html = f"""<html><body>
+  <p>Hola,</p>
+  <p>Haz clic en el botón para verificar tu correo:</p>
+  <p>
+    <a href="{link}" style="background:#235B4E;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;display:inline-block;">
+      Verificar correo
+    </a>
+  </p>
+  <p>Si el botón no funciona, copia y pega esta URL:<br>
+    <a href="{link}">{link}</a>
+  </p>
+  <p>Atentamente,<br>SYSTESO - Ayuntamiento de Emiliano Zapata</p>
+</body></html>"""
+    _send_email(destino, "Confirma tu correo - Recibos Ayuntamiento", plain, html)
+
+def enviar_correo_recuperacion(destino: str, enlace: str) -> None:
+    link = enlace.strip()
+    plain = f"""Hola,
+
+Solicitaste restablecer tu contraseña. Abre este enlace:
+
+<{link}>
+
+Si no fuiste tú, ignora este mensaje.
+"""
+    html = f"""<html><body>
+  <p>Hola,</p>
+  <p>Solicitaste restablecer tu contraseña. Usa este botón:</p>
+  <p>
+    <a href="{link}" style="background:#235B4E;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;display:inline-block;">
+      Restablecer contraseña
+    </a>
+  </p>
+  <p>Si el botón no funciona, copia y pega esta URL:<br>
+    <a href="{link}">{link}</a>
+  </p>
+</body></html>"""
+    _send_email(destino, "Recuperación de contraseña - Recibos Ayuntamiento", plain, html)
