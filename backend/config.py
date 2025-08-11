@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 from pathlib import Path
 from typing import Optional
+import re
 
 class Settings(BaseSettings):
     # App / Auth / DB
@@ -49,6 +50,12 @@ def is_s3_enabled() -> bool:
 
 _s3_client = None
 
+
+def _clean(x: str | None) -> str:
+    # quita espacios y un '=' perdido al inicio: " =us-east-005" -> "us-east-005"
+    return re.sub(r'^[=\s]+', '', (x or '')).strip()
+
+
 def get_s3_client():
     """Cliente S3 global (lazy)."""
     global _s3_client
@@ -60,6 +67,7 @@ def get_s3_client():
             region_name=settings.s3_region or None,
             aws_access_key_id=settings.s3_access_key_id,
             aws_secret_access_key=settings.s3_secret_access_key,
+
         )
     return _s3_client
 
@@ -68,3 +76,5 @@ def get_local_storage_root() -> Path:
     root = Path(settings.pdf_storage_path).absolute()
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+

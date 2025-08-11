@@ -16,7 +16,7 @@ PER_RE = re.compile(
 )
 
 USE_S3 = is_s3_enabled()
-S3 = get_s3_client()
+#S3 = get_s3_client()
 LOCAL_ROOT = None if USE_S3 else get_local_storage_root()  # Path cuando filesystem
 
 def extraer_datos_pdf(pdf_path: Path):
@@ -38,6 +38,7 @@ def _s3_key(rfc: str, clave_emp: str | int, nombre_archivo: str) -> str:
     return f"{rfc}/{clave_emp}/{nombre_archivo}"
 
 def _s3_exists(bucket: str, key: str) -> bool:
+    s3 = get_s3_client()
     try:
         S3.head_object(Bucket=bucket, Key=key)
         return True
@@ -54,6 +55,7 @@ def _save_pdf_and_get_path(src_pdf: Path, rfc: str, clave_emp: str | int, nombre
     - FS: ruta absoluta POSIX
     """
     if USE_S3:
+        s3 = get_s3_client()
         key = _s3_key(rfc, clave_emp, nombre_archivo)
         S3.upload_file(str(src_pdf), settings.s3_bucket, key, ExtraArgs={"ContentType": "application/pdf"})
         return f"s3://{settings.s3_bucket}/{key}"
