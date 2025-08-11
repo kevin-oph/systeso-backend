@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 from pathlib import Path
 from typing import Optional
+from botocore.config import Config
 import re
 
 class Settings(BaseSettings):
@@ -57,17 +58,25 @@ def _clean(x: str | None) -> str:
 
 
 def get_s3_client():
-    """Cliente S3 global (lazy)."""
     global _s3_client
     if _s3_client is None and is_s3_enabled():
         import boto3
+        endpoint = _clean(settings.s3_endpoint) or None
+        region   = _clean(settings.s3_region) or None
+        access   = _clean(settings.s3_access_key_id)
+        secret   = _clean(settings.s3_secret_access_key)
+
+        cfg = Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "virtual"}  # Backblaze B2 va mejor así
+        )
         _s3_client = boto3.client(
             "s3",
-            endpoint_url=settings.s3_endpoint or None,
-            region_name=settings.s3_region or None,
-            aws_access_key_id=settings.s3_access_key_id,
-            aws_secret_access_key=settings.s3_secret_access_key,
-
+            endpoint_url=endpoint,
+            region_name=region,
+            aws_access_key_id=access,
+            aws_secret_access_key=secret,
+            config=cfg,
         )
     return _s3_client
 

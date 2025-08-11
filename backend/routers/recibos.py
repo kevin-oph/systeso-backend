@@ -79,15 +79,30 @@ def download_recibo(recibo_id: int,
     )
 
 @router.post("/upload_zip")
-def upload_zip(archivo: UploadFile = File(...),
-               current_admin: User = Depends(require_admin)):
+def upload_zip(
+    archivo: UploadFile = File(...),
+    current_admin: User = Depends(require_admin)
+):
     """Carga masiva de recibos dentro de un archivo ZIP (solo administradores)."""
-    blob = archivo.file.read()
-    resumen = procesar_zip(blob)  # maneja transacciones internamente
-    return {
-        "msg": "ZIP procesado",
-        "nuevo": resumen["nuevos"],
-        "duplicados": resumen["ya_existían"],
-        "reparados": resumen["reparados"],
-        "sin_usuario": resumen["sin_usuario"],
-    }
+    try:
+        blob = archivo.file.read()
+        if not blob:
+            raise HTTPException(status_code=400, detail="Archivo vacío")
+        resumen = procesar_zip(blob)  # procesa e interactúa con S3/DB
+        return {
+            "msg": "ZIP procesado",
+            "nuevo": resumen.get("nuevos", 0),
+            "duplicados": resumen.get("ya_existían", 0),
+            "reparados": resumen.get("reparados", 0),
+            "sin_usuario": resumen.get("sin_usuario", 0),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        tb = "".join(traceback.format_exception(*sys.exc_info()))
+        print("ERROR upload_zip:", e)
+        print(tb)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fallo al procesar ZIP: {type(e).__name__}: {e}"
+        )
