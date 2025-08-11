@@ -1,17 +1,13 @@
 # backend/routers/recibos.py
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
-from pathlib import Path
-from typing import List
-from urllib.parse import urlparse
-
 from database import get_db
 from models import Recibo
 from schemas import ReciboOut
 from routers.users import get_current_user, require_admin, User
 from utils.zip_processor import procesar_zip
-from config import settings, is_s3_enabled, get_s3_client, get_local_storage_root
+import traceback, sys, zipfile
 
 router = APIRouter(prefix="/recibos", tags=["Recibos"])
 
@@ -83,26 +79,48 @@ def upload_zip(
     archivo: UploadFile = File(...),
     current_admin: User = Depends(require_admin)
 ):
-    """Carga masiva de recibos dentro de un archivo ZIP (solo administradores)."""
+    """
+    Carga masiva de recibos dentro de un archivo ZIP (solo administradores).
+    Agregamos logs y validaciones para diagnosticar caídas del proceso.
+    """
     try:
+        # 1) Leer bytes del archivo
         blob = archivo.file.read()
+        size_mb = round(len(blob) / (1024 * 1024), 2) if blob else 0
+        print(f"[upload_zip] recibido: {archivo.filename} ({size_mb} MB)")
+
         if not blob:
             raise HTTPException(status_code=400, detail="Archivo vacío")
-        resumen = procesar_zip(blob)  # procesa e interactúa con S3/DB
-        return {
+
+        # 2) Validar que sea un ZIP válido (evita que pdfplumber/procesamiento truene antes)
+        try:
+            if not zipfile.is_zipfile(io.BytesIO(blob)):
+                raise HTTPException(status_code=400, detail="El archivo no es un ZIP válido")
+        except Exception:
+            import io
+            if not zipfile.is_zipfile(io.BytesIO(blob)):
+                raise HTTPException(status_code=400, detail="El archivo no es un ZIP válido")
+
+        # 3) Procesar ZIP
+        resumen = procesar_zip(blob)
+
+        # 4) Respuesta clara
+        payload = {
             "msg": "ZIP procesado",
             "nuevo": resumen.get("nuevos", 0),
             "duplicados": resumen.get("ya_existían", 0),
             "reparados": resumen.get("reparados", 0),
             "sin_usuario": resumen.get("sin_usuario", 0),
+            "tamaño_mb": size_mb,
         }
+        print(f"[upload_zip] OK -> {payload}")
+        return JSONResponse(payload, status_code=200)
+
     except HTTPException:
         raise
     except Exception as e:
         tb = "".join(traceback.format_exception(*sys.exc_info()))
-        print("ERROR upload_zip:", e)
+        print("[upload_zip] ERROR:", e)
         print(tb)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Fallo al procesar ZIP: {type(e).__name__}: {e}"
-        )
+        # devolvemos detalle para que lo veas en el front
+        raise HTTPException(status_code=500, detail=f"Fallo al procesar ZIP: {type(e).__name__}: {e}")
