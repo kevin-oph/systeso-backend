@@ -16,7 +16,7 @@ SMTP_DEBUG   = int(os.getenv("SMTP_DEBUG", "0"))
 def _send_email(to: str, subject: str, plain: str, html: str) -> None:
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = EMAIL_FROM
+    msg["From"] = EMAIL_ORIGEN
     msg["To"] = to
 
     # Parte texto plano
@@ -29,8 +29,8 @@ def _send_email(to: str, subject: str, plain: str, html: str) -> None:
     if SMTP_PORT == 465:
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as smtp:
-            if SMTP_USER and SMTP_PASSWORD:
-                smtp.login(SMTP_USER, SMTP_PASSWORD)
+            if EMAIL_USER and EMAIL_PASS:
+                smtp.login(EMAIL_USER, EMAIL_PASS)
             smtp.send_message(msg)
     else:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
@@ -39,8 +39,8 @@ def _send_email(to: str, subject: str, plain: str, html: str) -> None:
             except smtplib.SMTPException:
                 # Algunos servidores en 25/2525 pueden no requerir STARTTLS
                 pass
-            if SMTP_USER and SMTP_PASSWORD:
-                smtp.login(SMTP_USER, SMTP_PASSWORD)
+            if EMAIL_USER and EMAIL_PASS:
+                smtp.login(EMAIL_USER, EMAIL_PASS)
             smtp.send_message(msg)
 
 def enviar_correo_verificacion(destino: str, enlace: str) -> None:
