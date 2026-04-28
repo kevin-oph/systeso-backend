@@ -9,6 +9,7 @@ from jose import jwt, JWTError
 from fastapi.security import OAuth2PasswordBearer
 from typing import Annotated
 from urllib.parse import quote
+from fastapi import APIRouter, Depends, HTTPException, status, Body, BackgroundTasks
 import os
 from passlib.hash import bcrypt
 
@@ -229,7 +230,11 @@ def test_enviar_correo(email: str):
 # solicitar_reset
 # ------------------------------------------------------------------
 @router.post("/solicitar_reset")
-def solicitar_reset(data: dict = Body(...), db: Session = Depends(get_db)):
+def solicitar_reset(
+    background_tasks: BackgroundTasks, # <--- Esto es lo que faltaba agregar
+    data: dict = Body(...), 
+    db: Session = Depends(get_db)
+):
     email = data.get("email")
     user = db.query(Usuario).filter(Usuario.email == email).first()
 
@@ -242,12 +247,10 @@ def solicitar_reset(data: dict = Body(...), db: Session = Depends(get_db)):
     user.reset_token = token
     db.commit()
 
-    try:
-        enviar_correo_recuperacion(email, enlace)
-        return {"mensaje": "Se ha enviado un enlace para restablecer tu contraseña"}
-    except Exception:
-        return {"mensaje": "Usuario actualizado, pero no se pudo enviar el correo. Intenta más tarde."}
-
+    # Ahora sí, FastAPI enviará el correo en segundo plano
+    background_tasks.add_task(enviar_correo_recuperacion, email, enlace)
+    
+    return {"mensaje": "Si el correo es válido, recibirás instrucciones en breve."}
 
 # ------------------------------------------------------------------
 # reset_password
