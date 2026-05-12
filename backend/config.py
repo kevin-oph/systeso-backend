@@ -15,12 +15,12 @@ class Settings(BaseSettings):
     allowed_origins: str = "*"
 
     # Email
-    smtp_server: str = Field(..., alias="SMTP_SERVER")
-    smtp_port: int = Field(..., alias="SMTP_PORT")
-    smtp_user: str = Field(..., alias="SMTP_USER")
-    smtp_password: str = Field(..., alias="SMTP_PASSWORD")
-    smtp_from: str = Field(..., alias="SMTP_FROM")
-    smtp_ssl: bool = Field(True, alias="SMTP_SSL")
+    smtp_server: str = Field("smtp.gmail.com", alias="SMTP_SERVER")
+    smtp_port: int = Field(587, alias="SMTP_PORT")
+    smtp_user: str = Field("", alias="SMTP_USER") # "" lo hace opcional al arranque
+    smtp_password: str = Field("", alias="SMTP_PASSWORD")
+    smtp_from: str = Field("nominas.zapata.morelos@gmail.com", alias="SMTP_FROM")
+    smtp_ssl: bool = Field(False, alias="SMTP_SSL") # False para puerto 587 (STARTTLS)
 
     # Storage
     storage_backend: str = Field("s3", alias="STORAGE_BACKEND")   # "s3" | "filesystem"
