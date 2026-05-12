@@ -5,13 +5,13 @@ import ssl
 from email.message import EmailMessage
 
 # Lee TODO de variables de entorno (no hardcodees credenciales en el código)
-EMAIL_ORIGEN = os.getenv("EMAIL_FROM", "jefatura.nominas@zapatamorelos.gob.mx")
-SMTP_SERVER  = os.getenv("SMTP_SERVER", "mail.zapatamorelos.gob.mx")
-SMTP_PORT    = int(os.getenv("SMTP_PORT", "465"))            # Principal (SSL)
+EMAIL_ORIGEN = os.getenv("EMAIL_FROM")
+SMTP_SERVER  = os.getenv("SMTP_SERVER")
+SMTP_PORT    = int(os.getenv("SMTP_PORT", "587"))            # Principal (SSL)
 SMTP_FALLBACK_PORT = int(os.getenv("SMTP_FALLBACK_PORT", "587"))  # Secundario (STARTTLS)
-EMAIL_USER   = os.getenv("EMAIL_USER", "jefatura.nominas@zapatamorelos.gob.mx")
-EMAIL_PASS   = os.getenv("EMAIL_PASSWORD", "Admin123Nomina")
-SMTP_DEBUG   = int(os.getenv("SMTP_DEBUG", "0"))
+EMAIL_USER   = os.getenv("EMAIL_USER")
+EMAIL_PASS   = os.getenv("EMAIL_PASSWORD")
+SMTP_DEBUG   = int(os.getenv("SMTP_DEBUG", "1"))
 
 def _send_email(to: str, subject: str, plain: str, html: str) -> None:
     msg = EmailMessage()
