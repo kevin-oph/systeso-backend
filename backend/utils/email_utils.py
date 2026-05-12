@@ -1,61 +1,52 @@
-# backend/utils/email_utils.py
-import os
 import smtplib
 import ssl
 from email.message import EmailMessage
-
-# Lee TODO de variables de entorno (no hardcodees credenciales en el código)
-EMAIL_ORIGEN = os.getenv("EMAIL_FROM")
-SMTP_SERVER  = os.getenv("SMTP_SERVER")
-SMTP_PORT    = int(os.getenv("SMTP_PORT", "587"))            # Principal (SSL)
-SMTP_FALLBACK_PORT = int(os.getenv("SMTP_FALLBACK_PORT", "587"))  # Secundario (STARTTLS)
-EMAIL_USER   = os.getenv("EMAIL_USER")
-EMAIL_PASS   = os.getenv("EMAIL_PASSWORD")
-SMTP_DEBUG   = int(os.getenv("SMTP_DEBUG", "1"))
+from config import settings  # Importamos la configuración validada por Pydantic
 
 def _send_email(to: str, subject: str, plain: str, html: str) -> None:
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = EMAIL_ORIGEN
+    msg["From"] = settings.smtp_from
     msg["To"] = to
 
-    # Parte texto plano
+    # Cuerpo del mensaje
     msg.set_content(plain)
-
-    # Parte HTML
     msg.add_alternative(html, subtype="html")
 
-    # Conecta por SSL (465) o STARTTLS (587)
-    if SMTP_PORT == 465:
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as smtp:
-            if EMAIL_USER and EMAIL_PASS:
-                smtp.login(EMAIL_USER, EMAIL_PASS)
-            smtp.send_message(msg)
-    else:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
-            try:
+    try:
+        # Lógica para Puerto 465 (SSL Directo)
+        if settings.smtp_port == 465:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(settings.smtp_server, settings.smtp_port, context=context, timeout=15) as smtp:
+                if settings.smtp_debug:
+                    smtp.set_debuglevel(1)
+                if settings.smtp_user and settings.smtp_password:
+                    smtp.login(settings.smtp_user, settings.smtp_password)
+                smtp.send_message(msg)
+        
+        # Lógica para Puerto 587 (STARTTLS) - Recomendado para Gmail
+        else:
+            with smtplib.SMTP(settings.smtp_server, settings.smtp_port, timeout=15) as smtp:
+                if settings.smtp_debug:
+                    smtp.set_debuglevel(1)
+                
+                # Inicia TLS por seguridad
                 smtp.starttls(context=ssl.create_default_context())
-            except smtplib.SMTPException:
-                # Algunos servidores en 25/2525 pueden no requerir STARTTLS
-                pass
-            if EMAIL_USER and EMAIL_PASS:
-                smtp.login(EMAIL_USER, EMAIL_PASS)
-            smtp.send_message(msg)
+                
+                if settings.smtp_user and settings.smtp_password:
+                    smtp.login(settings.smtp_user, settings.smtp_password)
+                smtp.send_message(msg)
+        
+        print(f"✅ DEBUG: Correo enviado exitosamente a {to}")
+
+    except smtplib.SMTPAuthenticationError:
+        print("❌ ERROR SMTP: Autenticación fallida. Revisa el usuario y la Contraseña de Aplicación.")
+    except Exception as e:
+        print(f"❌ ERROR CRÍTICO SMTP: No se pudo enviar el correo a {to}. Detalle: {str(e)}")
 
 def enviar_correo_verificacion(destino: str, enlace: str) -> None:
     link = enlace.strip()
-    plain = f"""Hola,
-
-Haz clic en el siguiente enlace para verificar tu correo:
-
-<{link}>
-
-Si el botón no funciona, copia y pega la URL en tu navegador.
-
-Atentamente,
-SYSTESO - Ayuntamiento de Emiliano Zapata
-"""
+    plain = f"Hola,\n\nHaz clic en el siguiente enlace para verificar tu correo:\n\n{link}\n\nAtentamente,\nSYSTESO - Ayuntamiento de Emiliano Zapata"
     html = f"""<html><body>
   <p>Hola,</p>
   <p>Haz clic en el botón para verificar tu correo:</p>
@@ -73,14 +64,7 @@ SYSTESO - Ayuntamiento de Emiliano Zapata
 
 def enviar_correo_recuperacion(destino: str, enlace: str) -> None:
     link = enlace.strip()
-    plain = f"""Hola,
-
-Solicitaste restablecer tu contraseña. Abre este enlace:
-
-<{link}>
-
-Si no fuiste tú, ignora este mensaje.
-"""
+    plain = f"Hola,\n\nSolicitaste restablecer tu contraseña. Abre este enlace:\n\n{link}\n\nSi no fuiste tú, ignora este mensaje."
     html = f"""<html><body>
   <p>Hola,</p>
   <p>Solicitaste restablecer tu contraseña. Usa este botón:</p>
@@ -92,5 +76,6 @@ Si no fuiste tú, ignora este mensaje.
   <p>Si el botón no funciona, copia y pega esta URL:<br>
     <a href="{link}">{link}</a>
   </p>
+  <p>Atentamente,<br>SYSTESO - Ayuntamiento de Emiliano Zapata</p>
 </body></html>"""
     _send_email(destino, "Recuperación de contraseña - Recibos Ayuntamiento", plain, html)
