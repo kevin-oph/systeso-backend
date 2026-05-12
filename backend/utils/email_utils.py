@@ -1,48 +1,34 @@
-import smtplib
-import ssl
+import requests
+import os
 from email.message import EmailMessage
 from config import settings  # Importamos la configuración validada por Pydantic
 
 def _send_email(to: str, subject: str, plain: str, html: str) -> None:
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = settings.smtp_from
-    msg["To"] = to
-
-    # Cuerpo del mensaje
-    msg.set_content(plain)
-    msg.add_alternative(html, subtype="html")
-
+    # Esta es tu nueva "llave" que pondrás en Railway
+    api_key = os.getenv("RESEND_API_KEY") 
+    
     try:
-        # Lógica para Puerto 465 (SSL Directo)
-        if settings.smtp_port == 465:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(settings.smtp_server, settings.smtp_port, context=context, timeout=15) as smtp:
-                if settings.smtp_debug:
-                    smtp.set_debuglevel(1)
-                if settings.smtp_user and settings.smtp_password:
-                    smtp.login(settings.smtp_user, settings.smtp_password)
-                smtp.send_message(msg)
-        
-        # Lógica para Puerto 587 (STARTTLS) - Recomendado para Gmail
+        r = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": "Sistema Recibos <onboarding@resend.dev>", # Luego lo cambias por el institucional
+                "to": [to],
+                "subject": subject,
+                "html": html,
+                "text": plain,
+            }
+        )
+        if r.status_code in [200, 201]:
+            print(f"✅ CORREO ENVIADO vía API a {to}")
         else:
-            with smtplib.SMTP(settings.smtp_server, settings.smtp_port, timeout=15) as smtp:
-                if settings.smtp_debug:
-                    smtp.set_debuglevel(1)
-                
-                # Inicia TLS por seguridad
-                smtp.starttls(context=ssl.create_default_context())
-                
-                if settings.smtp_user and settings.smtp_password:
-                    smtp.login(settings.smtp_user, settings.smtp_password)
-                smtp.send_message(msg)
-        
-        print(f"✅ DEBUG: Correo enviado exitosamente a {to}")
-
-    except smtplib.SMTPAuthenticationError:
-        print("❌ ERROR SMTP: Autenticación fallida. Revisa el usuario y la Contraseña de Aplicación.")
+            print(f"❌ ERROR API RESEND: {r.text}")
+            
     except Exception as e:
-        print(f"❌ ERROR CRÍTICO SMTP: No se pudo enviar el correo a {to}. Detalle: {str(e)}")
+        print(f"❌ ERROR CRÍTICO EN API: {str(e)}")
 
 def enviar_correo_verificacion(destino: str, enlace: str) -> None:
     link = enlace.strip()
