@@ -15,7 +15,7 @@ def _send_email(to: str, subject: str, plain: str, html: str) -> None:
                 "Content-Type": "application/json",
             },
             json={
-                "from": "Sistema Recibos <jefatura.nominasq@zapatamorelos.gob.mx>", # Luego lo cambias por el institucional
+                "from": "Sistema Recibos <jefatura.nominas@zapatamorelos.gob.mx>", # Luego lo cambias por el institucional
                 "to": [to],
                 "subject": subject,
                 "html": html,
