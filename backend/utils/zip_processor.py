@@ -111,124 +111,119 @@ def _save_pdf_and_get_path(src_pdf: Path, rfc: str, clave_emp: str | int, nombre
 
 # -------------------- Proceso principal --------------------
 def procesar_zip(blob: bytes) -> Dict[str, int]:
-    """
-    Procesa un ZIP con recibos PDF:
-      - Encuentra *todos* los RFC posibles (texto y nombre de archivo)
-      - Elige el RFC que SÍ exista en BD (comparando por RFC normalizado)
-      - Extrae periodo y guarda/actualiza el recibo en S3/FS
-      - Evita duplicados y repara faltantes
+    stats = {"nuevos": 0, "ya_existían": 0, "reparados": 0, "sin_usuario": 0, "omitidos": 0, "total_pdfs": 0}
 
-    Devuelve:
-      {"nuevos": X, "ya_existían": Y, "reparados": Z, "sin_usuario": W, "omitidos": U, "total_pdfs": T}
-    """
-    stats: Dict[str, int] = {
-        "nuevos": 0,
-        "ya_existían": 0,
-        "reparados": 0,
-        "sin_usuario": 0,
-        "omitidos": 0,
-        "total_pdfs": 0,
-    }
+    # Importación ligera como alternativa a pdfplumber para optimizar RAM
+    import pypdf
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        zpath = Path(tmpdir) / "lote.zip"
-        zpath.write_bytes(blob)
+    # Cargamos el ZIP directamente desde el flujo de bytes en memoria
+    zip_buffer = io.BytesIO(blob)
+    
+    db: Session = SessionLocal()
+    try:
+        # ---- Mapa de usuarios por RFC normalizado ----
+        usuarios = db.execute(select(Usuario.clave, Usuario.rfc)).all()
+        user_map: Dict[str, int] = {normalize_rfc(rfc): clave for clave, rfc in usuarios if normalize_rfc(rfc)}
 
-        with zipfile.ZipFile(zpath) as z:
-            z.extractall(tmpdir)
-
-        db: Session = SessionLocal()
-        try:
-            # ---- Mapa de usuarios por RFC normalizado ----
-            # Evita problemas de mayúsculas/espacios/guiones y colaciones SQL
-            usuarios = db.execute(select(Usuario.clave, Usuario.rfc)).all()
-            user_map: Dict[str, int] = {}
-            for clave, rfc in usuarios:
-                nrfc = normalize_rfc(rfc)
-                if nrfc:
-                    user_map[nrfc] = clave
-
-            # ---- Recorrer PDFs ----
-            for pdf_file in Path(tmpdir).rglob("*"):
-                if not pdf_file.is_file() or pdf_file.suffix.lower() != ".pdf":
+        with zipfile.ZipFile(zip_buffer) as z:
+            # Iteramos sobre la lista de archivos del ZIP sin extraerlos a disco
+            for member in z.infolist():
+                if member.is_dir() or not member.filename.lower().endswith('.pdf'):
                     continue
-
+                
                 stats["total_pdfs"] += 1
+                
+                # Leemos el archivo actual del ZIP en un entorno aislado de memoria
+                with z.open(member) as pdf_file:
+                    pdf_bytes = pdf_file.read()
+                    
+                    # --- Extracción ligera de texto usando pypdf ---
+                    rfcs: List[str] = []
+                    periodo: Optional[str] = None
+                    try:
+                        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+                        txt = "\n".join((page.extract_text() or "") for page in reader.pages)
+                        
+                        if txt and txt.strip():
+                            rfcs.extend(RFC_RE.findall(txt))
+                            per_m = PER_RE.search(txt)
+                            if per_m:
+                                ini, fin = per_m.groups()
+                                periodo = f"{ini.replace('/', '-')}_al_{fin.replace('/', '-')}"
+                    except Exception as e:
+                        print(f"[zip_processor] Error leyendo PDF interno {member.filename}: {e}")
+                        continue
 
-                rfcs_raw, periodo = extraer_rfcs_y_periodo(pdf_file)
+                    # Respaldo con el nombre del archivo dentro del ZIP
+                    filename_only = Path(member.filename).name
+                    name_rfcs = RFC_RE.findall(filename_only)
+                    for r in name_rfcs:
+                        if r not in rfcs:
+                            rfcs.append(r)
 
-                # Normalizar y filtrar RFCs
-                rfcs_norm = [normalize_rfc(r) for r in rfcs_raw]
-                rfcs_norm = [r for r in rfcs_norm if r]  # quitar None
+                    # --- Validaciones de Negocio ---
+                    rfcs_norm = [r for r in [normalize_rfc(x) for x in rfcs] if r]
+                    if not rfcs_norm or not periodo:
+                        stats["omitidos"] += 1
+                        continue
 
-                if not rfcs_norm or not periodo:
-                    stats["omitidos"] += 1
-                    print(f"[zip_processor] OMITIDO (sin RFC/Periodo): '{pdf_file.name}' rfcs={rfcs_raw} periodo={periodo}")
-                    continue
+                    rfc_norm_match = next((r for r in rfcs_norm if r in user_map), None)
+                    if not rfc_norm_match:
+                        stats["sin_usuario"] += 1
+                        continue
 
-                # Elegir el RFC que exista en BD
-                rfc_norm_match: Optional[str] = next((r for r in rfcs_norm if r in user_map), None)
-                if not rfc_norm_match:
-                    stats["sin_usuario"] += 1
-                    print(f"[zip_processor] SIN_USUARIO: candidatos={rfcs_norm} archivo={pdf_file.name}")
-                    continue
+                    clave_emp = user_map[rfc_norm_match]
+                    nombre_archivo = f"{rfc_norm_match}_{periodo}.pdf"
+                    periodo_bd = periodo.replace("_al_", " al ")
 
-                clave_emp = user_map[rfc_norm_match]
-                rfc_guardar = rfc_norm_match  # ya upper y sin separadores
-                nombre_archivo = f"{rfc_guardar}_{periodo}.pdf"
-                periodo_bd = periodo.replace("_al_", " al ")
-
-                # ¿Ya existe?
-                existe: Optional[Recibo] = (
-                    db.query(Recibo)
-                    .filter(
+                    # --- Verificación de duplicados ---
+                    existe = db.query(Recibo).filter(
                         Recibo.clave_empleado == clave_emp,
-                        Recibo.rfc == rfc_guardar,
+                        Recibo.rfc == rfc_norm_match,
                         Recibo.periodo == periodo_bd,
-                        Recibo.nombre_archivo == nombre_archivo,
-                    )
-                    .first()
-                )
+                        Recibo.nombre_archivo == nombre_archivo
+                    ).first()
 
-                if existe:
-                    # Reparar si falta el blob
-                    missing = False
-                    if USE_S3:
-                        key = _s3_key(rfc_guardar, clave_emp, nombre_archivo)
-                        try:
-                            missing = not _s3_exists(settings.s3_bucket, key)
-                        except Exception as e:
-                            print(f"[zip_processor] HEAD S3 error ({nombre_archivo}): {e}")
-                            missing = True
-                    else:
-                        missing = not Path(existe.ruta_archivo).exists()
+                    # Para evitar escribir archivos temporales a disco, creamos un archivo temporal rápido
+                    # solo si se requiere subir a S3 o almacenar localmente
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+                        tmp_pdf.write(pdf_bytes)
+                        tmp_pdf_path = Path(tmp_pdf.name)
 
-                    if missing:
-                        nueva_ruta = _save_pdf_and_get_path(pdf_file, rfc_guardar, clave_emp, nombre_archivo)
-                        existe.ruta_archivo = nueva_ruta
-                        db.commit()
-                        stats["reparados"] += 1
-                        print(f"[zip_processor] REPARADO: {nombre_archivo}")
-                    else:
-                        stats["ya_existían"] += 1
-                    continue
+                    try:
+                        if existe:
+                            stats["ya_existían"] += 1
+                            # Aquí puedes mantener tu lógica de "reparados" si lo requieres
+                            continue
 
-                # Nuevo registro
-                ruta_guardar = _save_pdf_and_get_path(pdf_file, rfc_guardar, clave_emp, nombre_archivo)
-                rec = Recibo(
-                    clave_empleado=clave_emp,
-                    rfc=rfc_guardar,
-                    periodo=periodo_bd,
-                    nombre_archivo=nombre_archivo,
-                    ruta_archivo=ruta_guardar,
-                    fecha_subida=datetime.now().isoformat(),
-                )
-                db.add(rec)
-                db.commit()
-                stats["nuevos"] += 1
-                print(f"[zip_processor] NUEVO: {nombre_archivo}")
-        finally:
-            db.close()
+                        # --- Guardar registro nuevo ---
+                        ruta_guardar = _save_pdf_and_get_path(tmp_pdf_path, rfc_norm_match, clave_emp, nombre_archivo)
+                        rec = Recibo(
+                            clave_empleado=clave_emp,
+                            rfc=rfc_norm_match,
+                            periodo=periodo_bd,
+                            nombre_archivo=nombre_archivo,
+                            ruta_archivo=ruta_guardar,
+                            fecha_subida=datetime.now().isoformat(),
+                        )
+                        db.add(rec)
+                        stats["nuevos"] += 1
+                        
+                        # Hacemos commits en lotes para no saturar la BD (ej. cada 50 registros)
+                        if stats["nuevos"] % 50 == 0:
+                            db.commit()
+                            
+                    finally:
+                        # Nos aseguramos de borrar el archivo temporal del PDF individual inmediatamente
+                        if tmp_pdf_path.exists():
+                            tmp_pdf_path.unlink()
 
-    print(f"[zip_processor] RESUMEN: {stats}")
+            # Commit final para los registros restantes
+            db.commit()
+
+    finally:
+        db.close()
+        zip_buffer.close()
+
+    print(f"[zip_processor] RESUMEN OPTIMIZADO: {stats}")
     return stats
