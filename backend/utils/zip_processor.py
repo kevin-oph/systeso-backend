@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Tuple, List
 
-import pdfplumber
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from botocore.exceptions import ClientError
@@ -22,7 +21,7 @@ from models import Usuario, Recibo
 # RFC MX: 3-4 letras (incluye Ñ y &), 6 dígitos fecha, 2-3 homoclave
 RFC_RE = re.compile(r"\b([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{2,3})\b", re.IGNORECASE)
 
-# Regex corregida y ultra-flexible para soportar variantes de 2026 (guiones, diagonales, espacios y meses largos)
+# Regex ultra-flexible para soportar variantes de 2026 (guiones, diagonales, espacios y meses largos)
 PER_RE = re.compile(
     r"Periodo\s*del\s*:?\s*"
     r"(\d{1,2}\s*[\/-]\s*[A-Za-zÁÉÍÓÚáéíóú\.]+\s*[\/-]\s*\d{4})\s*"
@@ -45,9 +44,9 @@ def normalize_rfc(s: str | None) -> Optional[str]:
 # -------------------- Extracción desde PDF --------------------
 def extraer_rfcs_y_periodo(pdf_path: Path) -> Tuple[List[str], Optional[str]]:
     """
-    Devuelve ([rfcs_encontrados], periodo or None).
-    rfcs_encontrados son strings en bruto (sin normalizar).
+    Función de respaldo heredada (mantenida por compatibilidad si se usa en otros módulos).
     """
+    import pdfplumber
     rfcs: List[str] = []
     periodo: Optional[str] = None
 
@@ -63,16 +62,9 @@ def extraer_rfcs_y_periodo(pdf_path: Path) -> Tuple[List[str], Optional[str]]:
         per_m = PER_RE.search(txt)
         if per_m:
             ini, fin = per_m.groups()
-            periodo = f"{ini.replace('/', '-')}_al_{fin.replace('/', '-')}"
-    else:
-        print(f"[zip_processor] SIN_TEXTO: '{pdf_path.name}' (posible escaneado)")
-
-    # RFCs en nombre de archivo como respaldo
-    name_rfcs = RFC_RE.findall(pdf_path.name)
-    for r in name_rfcs:
-        if r not in rfcs:
-            rfcs.append(r)
-
+            ini_clean = re.sub(r"\s+", "", ini).replace('/', '-')
+            fin_clean = re.sub(r"\s+", "", fin).replace('/', '-')
+            periodo = f"{ini_clean}_al_{fin_clean}"
     return rfcs, periodo
 
 # -------------------- Almacenamiento --------------------
@@ -111,9 +103,13 @@ def _save_pdf_and_get_path(src_pdf: Path, rfc: str, clave_emp: str | int, nombre
 
 # -------------------- Proceso principal --------------------
 def procesar_zip(blob: bytes) -> Dict[str, int]:
+    """
+    Procesa un ZIP con recibos PDF optimizando el uso de memoria RAM mediante flujos binarios.
+    Sanitiza estrictamente los periodos de tiempo leídos de los nuevos formatos 2026.
+    """
     stats = {"nuevos": 0, "ya_existían": 0, "reparados": 0, "sin_usuario": 0, "omitidos": 0, "total_pdfs": 0}
 
-    # Importación ligera como alternativa a pdfplumber para optimizar RAM
+    # Importación ligera orientada al flujo continuo de datos planos
     import pypdf
 
     # Cargamos el ZIP directamente desde el flujo de bytes en memoria
@@ -126,18 +122,18 @@ def procesar_zip(blob: bytes) -> Dict[str, int]:
         user_map: Dict[str, int] = {normalize_rfc(rfc): clave for clave, rfc in usuarios if normalize_rfc(rfc)}
 
         with zipfile.ZipFile(zip_buffer) as z:
-            # Iteramos sobre la lista de archivos del ZIP sin extraerlos a disco
+            # Iteramos sobre la lista de archivos del ZIP sin extraerlos físicamente a disco
             for member in z.infolist():
                 if member.is_dir() or not member.filename.lower().endswith('.pdf'):
                     continue
                 
                 stats["total_pdfs"] += 1
                 
-                # Leemos el archivo actual del ZIP en un entorno aislado de memoria
+                # Leemos el archivo actual del ZIP en un entorno binario aislado
                 with z.open(member) as pdf_file:
                     pdf_bytes = pdf_file.read()
                     
-                    # --- Extracción ligera de texto usando pypdf ---
+                    # --- Extracción ligera de texto plano usando pypdf ---
                     rfcs: List[str] = []
                     periodo: Optional[str] = None
                     try:
@@ -149,7 +145,13 @@ def procesar_zip(blob: bytes) -> Dict[str, int]:
                             per_m = PER_RE.search(txt)
                             if per_m:
                                 ini, fin = per_m.groups()
-                                periodo = f"{ini.replace('/', '-')}_al_{fin.replace('/', '-')}"
+                                
+                                # SANITIZACIÓN CRÍTICA: Eliminar espacios en blanco inducidos por el PDF y cambiar '/' por '-'
+                                ini_clean = re.sub(r"\s+", "", ini).replace('/', '-')
+                                fin_clean = re.sub(r"\s+", "", fin).replace('/', '-')
+                                
+                                # Construimos el string estandarizado interno
+                                periodo = f"{ini_clean}_al_{fin_clean}"
                     except Exception as e:
                         print(f"[zip_processor] Error leyendo PDF interno {member.filename}: {e}")
                         continue
@@ -165,18 +167,22 @@ def procesar_zip(blob: bytes) -> Dict[str, int]:
                     rfcs_norm = [r for r in [normalize_rfc(x) for x in rfcs] if r]
                     if not rfcs_norm or not periodo:
                         stats["omitidos"] += 1
+                        print(f"[zip_processor] OMITIDO (sin RFC o sin Periodo válido): '{filename_only}'")
                         continue
 
                     rfc_norm_match = next((r for r in rfcs_norm if r in user_map), None)
                     if not rfc_norm_match:
                         stats["sin_usuario"] += 1
+                        print(f"[zip_processor] SIN_USUARIO: candidatos={rfcs_norm} archivo={filename_only}")
                         continue
 
                     clave_emp = user_map[rfc_norm_match]
                     nombre_archivo = f"{rfc_norm_match}_{periodo}.pdf"
+                    
+                    # Forzamos a que el formato guardado en BD use la estructura limpia esperada "X al Y"
                     periodo_bd = periodo.replace("_al_", " al ")
 
-                    # --- Verificación de duplicados ---
+                    # --- Verificación de registros duplicados ---
                     existe = db.query(Recibo).filter(
                         Recibo.clave_empleado == clave_emp,
                         Recibo.rfc == rfc_norm_match,
@@ -184,8 +190,7 @@ def procesar_zip(blob: bytes) -> Dict[str, int]:
                         Recibo.nombre_archivo == nombre_archivo
                     ).first()
 
-                    # Para evitar escribir archivos temporales a disco, creamos un archivo temporal rápido
-                    # solo si se requiere subir a S3 o almacenar localmente
+                    # Generamos el archivo temporal únicamente para el proceso de guardado físico individual
                     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
                         tmp_pdf.write(pdf_bytes)
                         tmp_pdf_path = Path(tmp_pdf.name)
@@ -193,10 +198,9 @@ def procesar_zip(blob: bytes) -> Dict[str, int]:
                     try:
                         if existe:
                             stats["ya_existían"] += 1
-                            # Aquí puedes mantener tu lógica de "reparados" si lo requieres
                             continue
 
-                        # --- Guardar registro nuevo ---
+                        # --- Almacenamiento y Registro de Nuevo Recibo ---
                         ruta_guardar = _save_pdf_and_get_path(tmp_pdf_path, rfc_norm_match, clave_emp, nombre_archivo)
                         rec = Recibo(
                             clave_empleado=clave_emp,
@@ -209,21 +213,21 @@ def procesar_zip(blob: bytes) -> Dict[str, int]:
                         db.add(rec)
                         stats["nuevos"] += 1
                         
-                        # Hacemos commits en lotes para no saturar la BD (ej. cada 50 registros)
+                        # Commits por lotes parciales de 50 elementos para aliviar la memoria de la BD
                         if stats["nuevos"] % 50 == 0:
                             db.commit()
                             
                     finally:
-                        # Nos aseguramos de borrar el archivo temporal del PDF individual inmediatamente
+                        # Eliminación inmediata del temporal en disco para evitar acumulaciones masivas
                         if tmp_pdf_path.exists():
                             tmp_pdf_path.unlink()
 
-            # Commit final para los registros restantes
+            # Confirmación transaccional final para los registros restantes
             db.commit()
 
     finally:
         db.close()
         zip_buffer.close()
 
-    print(f"[zip_processor] RESUMEN OPTIMIZADO: {stats}")
+    print(f"[zip_processor] RESUMEN COMPLETO PROCESADO: {stats}")
     return stats
