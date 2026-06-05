@@ -22,12 +22,12 @@ from models import Usuario, Recibo
 # RFC MX: 3-4 letras (incluye Ñ y &), 6 dígitos fecha, 2-3 homoclave
 RFC_RE = re.compile(r"\b([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{2,3})\b", re.IGNORECASE)
 
-# "Periodo del: 01-ene.-2025 al 15-ene.-2025" (tolerante a espacios y / o -)
+# Regex corregida y ultra-flexible para soportar variantes de 2026 (guiones, diagonales, espacios y meses largos)
 PER_RE = re.compile(
     r"Periodo\s*del\s*:?\s*"
-    r"(\d{1,2}[/-][A-Za-zÁÉÍÓÚáéíóú\.]+[/-]\d{4})\s*"
+    r"(\d{1,2}\s*[\/-]\s*[A-Za-zÁÉÍÓÚáéíóú\.]+\s*[\/-]\s*\d{4})\s*"
     r"al\s*"
-    r"(\d{1,2}[/-][A-Za-zÁÉÍÓÚáéíóú\.]+[/-]\d{4})",
+    r"(\d{1,2}\s*[\/-]\s*[A-Za-zÁÉÍÓÚáéíóú\.]+\s*[\/-]\s*\d{4})",
     re.IGNORECASE,
 )
 
