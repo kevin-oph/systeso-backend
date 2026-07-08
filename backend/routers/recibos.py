@@ -3,16 +3,16 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from typing import List
 from pathlib import Path
-from urllib.parse import urlparse  # <-- necesario
+from urllib.parse import urlparse
 import io, zipfile, traceback, sys
 
 from sqlalchemy.orm import Session
-from database import get_db
+from database import get_db, SessionLocal  # <-- Añadimos SessionLocal para control manual estricto
 from models import Recibo
 from schemas import ReciboOut
 from routers.users import get_current_user, require_admin, User
 
-from config import is_s3_enabled, get_s3_client, get_local_storage_root, settings  # <-- añadí get_local_storage_root
+from config import is_s3_enabled, get_s3_client, get_local_storage_root, settings
 from botocore.exceptions import ClientError
 
 router = APIRouter(prefix="/recibos", tags=["Recibos"])
@@ -35,21 +35,30 @@ def list_recibos(
         for r in rows
     ]
 
-# ----------------------------- DESCARGA / VIEW -----------------------------
+# ----------------------------- DESCARGA / VIEW (BLINDADO) -----------------------------
 @router.get("/{recibo_id}/file")
 def download_recibo(
     recibo_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    row = db.query(Recibo).filter(Recibo.id == recibo_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Recibo no encontrado")
+    """
+    Descarga o redirecciona al archivo PDF del recibo mitigando fugas en el Pool de Conexiones.
+    La sesión de la base de datos se cierra ANTES de procesar llamadas externas a S3/Archivos.
+    """
+    # 1) Extraer datos de la BD y cerrar la sesión de inmediato usando un Context Manager manual
+    with SessionLocal() as db:
+        row = db.query(Recibo).filter(Recibo.id == recibo_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Recibo no encontrado")
 
-    if row.rfc.upper() != current_user.rfc.upper():
-        raise HTTPException(status_code=403, detail="No tienes acceso a este recibo")
+        if row.rfc.upper() != current_user.rfc.upper():
+            raise HTTPException(status_code=403, detail="No tienes acceso a este recibo")
 
-    ruta_str = (row.ruta_archivo or "").strip()
+        ruta_str = (row.ruta_archivo or "").strip()
+        nombre_archivo = row.nombre_archivo
+
+    # Al salir del bloque 'with', la conexión a PostgreSQL ya fue devuelta al Pool limpia. 
+    # Todo lo subsecuente se procesa sin retener recursos de la base de datos.
 
     # Caso S3: ruta "s3://bucket/key"
     if ruta_str.startswith("s3://"):
@@ -57,11 +66,11 @@ def download_recibo(
             raise HTTPException(status_code=500, detail="S3 no configurado")
 
         s3 = get_s3_client()
-        parsed = urlparse(ruta_str)  # s3://bucket/key
+        parsed = urlparse(ruta_str)
         bucket = parsed.netloc
         key = parsed.path.lstrip("/")
 
-        # (Opcional pero útil) verificar existencia para devolver 404 limpio
+        # Verificar existencia en el Storage para devolver 404 limpio
         try:
             s3.head_object(Bucket=bucket, Key=key)
         except ClientError as e:
@@ -77,14 +86,14 @@ def download_recibo(
                     "Bucket": bucket,
                     "Key": key,
                     "ResponseContentType": "application/pdf",
-                    "ResponseContentDisposition": f'inline; filename="{row.nombre_archivo}"',
+                    "ResponseContentDisposition": f'inline; filename="{nombre_archivo}"',
                 },
                 ExpiresIn=60,  # 1 minuto
             )
         except Exception:
             raise HTTPException(status_code=500, detail="No se pudo generar URL firmada")
 
-        # 307 para mantener método GET; requests sigue el redirect por defecto
+        # 307 mantiene el método GET hacia la URL externa firmada
         return RedirectResponse(url, status_code=307)
 
     # Caso filesystem local (producción on-prem)
@@ -97,7 +106,7 @@ def download_recibo(
     return FileResponse(
         path=str(ruta),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{row.nombre_archivo}"'},
+        headers={"Content-Disposition": f'inline; filename="{nombre_archivo}"'},
     )
 
 # ----------------------------- UPLOAD ZIP -----------------------------
@@ -108,7 +117,6 @@ def upload_zip(
 ):
     """
     Carga masiva de recibos dentro de un archivo ZIP (solo administradores).
-    Agregamos logs y validaciones para diagnosticar caídas del proceso.
     """
     try:
         # 1) Leer bytes del archivo
@@ -123,7 +131,7 @@ def upload_zip(
         if not zipfile.is_zipfile(io.BytesIO(blob)):
             raise HTTPException(status_code=400, detail="El archivo no es un ZIP válido")
 
-        # 3) Procesar ZIP (import local para evitar fallas al arrancar si zip_processor tiene un error)
+        # 3) Procesar ZIP
         from utils.zip_processor import procesar_zip
 
         resumen = procesar_zip(blob)
@@ -146,7 +154,6 @@ def upload_zip(
         tb = "".join(traceback.format_exception(*sys.exc_info()))
         print("[upload_zip] ERROR:", e)
         print(tb)
-        # devolvemos detalle para que lo veas en el front
         raise HTTPException(
             status_code=500,
             detail=f"Fallo al procesar ZIP: {type(e).__name__}: {e}",
