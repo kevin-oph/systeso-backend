@@ -125,27 +125,36 @@ def listar_empleados(
     db: Session = Depends(get_db)
 ):
     """
-    Devuelve la lista general de empleados registrados en la base de datos
-    ordenados alfabéticamente por nombre para la vista de administración.
+    Devuelve la lista general de empleados mapeando los datos directamente
+    desde la tabla 'usuarios' sin depender de columnas inexistentes como 'id'.
     """
-    usuarios = (
-        db.query(Usuario)
-        .filter(Usuario.rol == "usuario")
-        .order_by(Usuario.nombre.asc())
-        .all()
-    )
-    
-    return [
-        {
-            "id": u.id,
-            "clave": getattr(u, "clave", "S/N"),
-            "nombre": u.nombre,
-            "rfc": u.rfc,
-            "departamento": getattr(u, "departamento", None),
-            "puesto": getattr(u, "puesto", None),
-            "activo": getattr(u, "activo", 1),
-        }
-        for u in usuarios
-    ]
+    try:
+        # Consultar registros que tengan nombre y RFC mapeados
+        usuarios = (
+            db.query(Usuario)
+            .filter(Usuario.nombre.isnot(None))
+            .order_by(Usuario.nombre.asc())
+            .all()
+        )
+        
+        resultado = []
+        for index, u in enumerate(usuarios):
+            resultado.append({
+                "id": getattr(u, "id", index + 1),
+                "clave": str(getattr(u, "clave", "S/N") or "S/N"),
+                "nombre": str(getattr(u, "nombre", "") or "Sin nombre"),
+                "rfc": str(getattr(u, "rfc", "") or "Sin RFC"),
+                "departamento": str(getattr(u, "departamento", "") or "Sin especificar"),
+                "puesto": str(getattr(u, "puesto", "") or "Sin especificar"),
+                "activo": getattr(u, "activo", 1),
+            })
+            
+        return resultado
 
+    except Exception as e:
+        print(f"[listar_empleados] Error: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al obtener empleados de la BD: {str(e)}"
+        )
 
