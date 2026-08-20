@@ -116,3 +116,36 @@ def historial_cargas(_: dict = Depends(require_admin), db: Session = Depends(get
         }
         for r in rows
     ]
+
+
+# --- ENDPOINT PARA LISTAR TRABAJADORES (Pestaña "Trabajadores" en React) ---
+@router.get("/")
+def listar_empleados(
+    current_user: dict = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Devuelve la lista general de empleados registrados en la base de datos
+    ordenados alfabéticamente por nombre para la vista de administración.
+    """
+    usuarios = (
+        db.query(Usuario)
+        .filter(Usuario.rol == "usuario")
+        .order_by(Usuario.nombre.asc())
+        .all()
+    )
+    
+    return [
+        {
+            "id": u.id,
+            "clave": getattr(u, "clave", "S/N"),
+            "nombre": u.nombre,
+            "rfc": u.rfc,
+            "departamento": getattr(u, "departamento", None),
+            "puesto": getattr(u, "puesto", None),
+            "activo": getattr(u, "activo", 1),
+        }
+        for u in usuarios
+    ]
+
+
